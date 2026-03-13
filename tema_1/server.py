@@ -1,101 +1,177 @@
 import socket
+import threading
 
 HOST = "127.0.0.1"
-PORT = 1234
+PORT = 3333
+BUFFER_SIZE = 1024
 
-products = {}
 
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.bind((HOST, PORT))
-server.listen()
+data_store = {}
+lock = threading.Lock()
 
-print("Server started...")
 
-while True:
+def build_response(message):
+    return f"{len(message)} {message}".encode()
 
-    client, addr = server.accept()
-    print("Client connected:", addr)
 
-    data = client.recv(1024).decode().strip()
-    parts = data.split()
+def execute_command(cmd):
 
-    if len(parts) == 0:
-        client.send("ERROR empty command".encode())
-        client.close()
-        continue
+    tokens = cmd.split()
 
-    command = parts[0].upper()
+    if not tokens:
+        return "ERROR empty command"
+
+    command = tokens[0].upper()
 
     if command == "ADD":
-        if len(parts) < 3:
-            client.send("ERROR invalid parameters".encode())
-        else:
-            key = parts[1]
-            value = parts[2]
-            products[key] = value
-            client.send("OK - record add".encode())
+
+        if len(tokens) < 3:
+            return "ERROR invalid parameters"
+
+        key = tokens[1]
+        value = " ".join(tokens[2:])
+
+        with lock:
+            data_store[key] = value
+
+        return "OK record added"
+
 
     elif command == "GET":
-        key = parts[1]
-        if key in products:
-            client.send(f"DATA {products[key]}".encode())
-        else:
-            client.send("ERROR invalid key".encode())
+
+        if len(tokens) != 2:
+            return "ERROR invalid parameters"
+
+        key = tokens[1]
+
+        with lock:
+            if key in data_store:
+                return f"DATA {data_store[key]}"
+            else:
+                return "ERROR invalid key"
+
 
     elif command == "REMOVE":
-        key = parts[1]
-        if key in products:
-            del products[key]
-            client.send("OK value deleted".encode())
-        else:
-            client.send("ERROR invalid key".encode())
+
+        if len(tokens) != 2:
+            return "ERROR invalid parameters"
+
+        key = tokens[1]
+
+        with lock:
+            if key in data_store:
+                del data_store[key]
+                return "OK value deleted"
+            else:
+                return "ERROR invalid key"
+
 
     elif command == "LIST":
 
-        result = []
-        for k, v in products.items():
-            result.append(f"{k}={v}")
+        with lock:
+            pairs = [f"{k}={v}" for k, v in data_store.items()]
 
-        response = "DATA|" + ",".join(result)
-        client.send(response.encode())
+        return "DATA|" + ",".join(pairs)
+
 
     elif command == "COUNT":
 
-        client.send(f"DATA {len(products)}".encode())
+        with lock:
+            return f"DATA {len(data_store)}"
+
 
     elif command == "CLEAR":
 
-        products.clear()
-        client.send("all data deleted".encode())
+        with lock:
+            data_store.clear()
+
+        return "OK all data deleted"
+
 
     elif command == "UPDATE":
 
-        key = parts[1]
-        value = parts[2]
+        if len(tokens) < 3:
+            return "ERROR invalid parameters"
 
-        if key in products:
-            products[key] = value
-            client.send("Data updated".encode())
-        else:
-            client.send("ERROR invalid key".encode())
+        key = tokens[1]
+        value = " ".join(tokens[2:])
+
+        with lock:
+            if key in data_store:
+                data_store[key] = value
+                return "OK data updated"
+            else:
+                return "ERROR invalid key"
+
 
     elif command == "POP":
 
-        key = parts[1]
+        if len(tokens) != 2:
+            return "ERROR invalid parameters"
 
-        if key in products:
-            value = products.pop(key)
-            client.send(f"DATA {value}".encode())
-        else:
-            client.send("ERROR invalid key".encode())
+        key = tokens[1]
+
+        with lock:
+            if key in data_store:
+                value = data_store.pop(key)
+                return f"DATA {value}"
+            else:
+                return "ERROR invalid key"
+
 
     elif command == "QUIT":
+        return "OK connection closed"
 
-        client.send("Server closing".encode())
-        client.close()
-        break
 
-    else:
-        client.send("ERROR unknown command".encode())
+    return "ERROR unknown command"
 
-    client.close()
+
+
+def client_thread(conn):
+
+    while True:
+
+        try:
+            data = conn.recv(BUFFER_SIZE)
+
+            if not data:
+                break
+
+            command = data.decode().strip()
+
+            result = execute_command(command)
+
+            conn.sendall(build_response(result))
+
+            if command.upper() == "QUIT":
+                break
+
+        except:
+            conn.sendall(build_response("ERROR server problem"))
+            break
+
+    conn.close()
+
+
+
+def start():
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((HOST, PORT))
+    server.listen()
+
+    print("Server running on port", PORT)
+
+    while True:
+
+        conn, addr = server.accept()
+
+        print("Client connected:", addr)
+
+        t = threading.Thread(target=client_thread, args=(conn,))
+        t.start()
+
+
+
+if __name__ == "__main__":
+    start()

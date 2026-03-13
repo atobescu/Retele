@@ -1,22 +1,53 @@
 import socket
 
 HOST = "127.0.0.1"
-PORT = 1234
+PORT = 3333
+BUFFER_SIZE = 1024
 
-while True:
 
-    command = input("Enter command: ")
+def read_message(sock):
 
-    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client.connect((HOST, PORT))
+    data = sock.recv(BUFFER_SIZE).decode()
 
-    client.send(command.encode())
+    if not data:
+        return None
 
-    response = client.recv(1024).decode()
+    parts = data.split(" ", 1)
 
-    print("Server:", response)
+    if len(parts) != 2:
+        return "Invalid server response"
 
-    client.close()
+    length = int(parts[0])
+    message = parts[1]
 
-    if command.upper() == "QUIT":
-        break
+    while len(message) < length:
+        message += sock.recv(BUFFER_SIZE).decode()
+
+    return message
+
+
+def run_client():
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((HOST, PORT))
+
+    print("Connected to server")
+
+    while True:
+
+        cmd = input("cmd> ")
+
+        s.send(cmd.encode())
+
+        response = read_message(s)
+
+        print("Server:", response)
+
+        if cmd.upper() == "QUIT":
+            break
+
+    s.close()
+
+
+if __name__ == "__main__":
+    run_client()
